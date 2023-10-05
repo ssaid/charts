@@ -781,3 +781,25 @@ networkPolicy:
     ##             label: example
     ##
     customRules: {}
+
+# Deploying doodba?
+doodba: true
+withoutDemo: true
+listDb: false
+smtpSsl: false
+emailFrom: ""
+unaccent: false
+proxy_mode: true
+
+useBackup:
+  # Shall we restore a bu?
+  enable: false
+  # The bu is sql.gz(legacy)?
+  legacy: false
+  params:
+    AWS_ACCESS_KEY_ID: XXX
+    AWS_SECRET_ACCESS_KEY: XXX
+    DBS_TO_INCLUDE: ^prod
+    DST: boto3+s3://my-bucket/path/
+    PASSPHRASE: XXX
+    TZ: UTC

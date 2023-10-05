@@ -1,0 +1,138 @@
+# Job to restore a sql.gz backup
+{{- if .Values.useBackup.enable }}
+
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ printf "%s-backup" (include "common.names.fullname" .) | trunc 63 | trimSuffix "-" }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{- include "common.labels.standard" ( dict "customLabels" .Values.commonLabels "context" $ ) | nindent 4 }}
+  {{- if .Values.commonAnnotations }}
+  annotations: {{- include "common.tplvalues.render" ( dict "value" .Values.commonAnnotations "context" $ ) | nindent 4 }}
+  {{- end }}
+type: Opaque
+data:
+  aws_access_key: {{ .Values.useBackup.params.AWS_ACCESS_KEY_ID | b64enc | quote }}
+  aws_secret_key: {{ .Values.useBackup.params.AWS_SECRET_ACCESS_KEY | b64enc | quote }}
+  passphrase: {{ .Values.useBackup.params.PASSPHRASE | b64enc | quote }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: backup-restorer
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  template:
+    spec:
+      containers:
+      - image: ghcr.io/tecnativa/docker-duplicity-postgres-s3:latest
+        imagePullPolicy: IfNotPresent
+        name: backup
+        env:
+          - name: PGHOST
+            value: {{ template "odoo.databaseHost" . }}
+          - name: PGPORT
+            value: {{ template "odoo.databasePort" . }}
+          - name: PGDATABASE
+            value: {{ template "odoo.databaseName" . }}
+          - name: PGUSER
+            value: {{ template "odoo.databaseUser" . }}
+          - name: PGPASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "odoo.databaseSecretName" . }}
+                key: {{ include "odoo.databaseSecretPasswordKey" . }} 
+          - name: AWS_ACCESS_KEY_ID
+            valueFrom:
+              secretKeyRef:
+                name: {{ printf "%s-backup" (include "common.names.fullname" .) | trunc 63 | trimSuffix "-" }}
+                key: aws_access_key
+          - name: AWS_SECRET_ACCESS_KEY
+            valueFrom:
+              secretKeyRef:
+                name: {{ printf "%s-backup" (include "common.names.fullname" .) | trunc 63 | trimSuffix "-" }}
+                key: aws_secret_key
+          - name: PASSPHRASE
+            valueFrom:
+              secretKeyRef:
+                name: {{ printf "%s-backup" (include "common.names.fullname" .) | trunc 63 | trimSuffix "-" }}
+                key: passphrase
+          - name: TZ
+            value: {{ .Values.useBackup.params.TZ }}
+          - name: DST
+            value: {{ .Values.useBackup.params.DST }}
+          - name: DBS_TO_INCLUDE
+            value: {{ .Values.useBackup.params.DBS_TO_INCLUDE }}
+
+        # envFrom:
+        # - configMapRef:
+        #     name: backup-configmap
+        # # - configMapRef:
+        # #     name: db-configmap
+        command: ["sh", "-c"]
+        {{- if .Values.useBackup.legacy }}
+        args:
+          - |
+            /usr/local/bin/entrypoint
+            pip install awscli
+            BASE_URL=$(echo $DST|sed 's/boto3+//')
+            BACKUP_NAME=$(aws s3 ls $BASE_URL|tail -1|tr -s ' '|cut -d' ' -f4)
+            echo "1. Download backup"
+            aws s3 cp $BASE_URL$BACKUP_NAME /tmp/db.sql.gz
+            echo "2. Restore to tmp db" 
+            dropdb --if-exists $PGDATABASE-temp
+            createdb $PGDATABASE-temp
+            gunzip -c /tmp/db.sql.gz | psql -d $PGDATABASE-temp
+            echo "3. Closing connections to original db"
+            psql -d postgres -c "ALTER DATABASE $PGDATABASE WITH ALLOW_CONNECTIONS false"
+            psql -d postgres -c "SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pg_stat_activity.datname = '$PGDATABASE'"
+            echo "4. Switching"
+            dropdb --if-exists $PGDATABASE
+            psql -d postgres -c "ALTER DATABASE \"$PGDATABASE-temp\" RENAME TO $PGDATABASE"
+            echo "5. Autoclean"
+            wget -O- https://gitlab.eynes.com.ar/infra/eeutils/raw/master/eeutils/templates/auto_clean.sql 2>/dev/null | psql -d $PGDATABASE
+            echo "6. End" 
+        {{- else }}
+        args:
+          - |
+            /usr/local/bin/entrypoint
+            echo "1. Download backup"
+            restore --force
+            echo "2. Restore to tmp db" 
+            dropdb --if-exists $PGDATABASE-temp
+            createdb $PGDATABASE-temp
+            psql -f $SRC/prod.sql -d $PGDATABASE-temp
+            echo "3. Closing connections to original db"
+            psql -d postgres -c "ALTER DATABASE $PGDATABASE WITH ALLOW_CONNECTIONS false"
+            echo "4. Switching"
+            psql -d postgres -c "SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pg_stat_activity.datname = '$PGDATABASE'"
+            dropdb --if-exists $PGDATABASE
+            psql -d postgres -c "SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pg_stat_activity.datname = '$PGDATABASE-temp'"
+            psql -d postgres -c "ALTER DATABASE \"$PGDATABASE-temp\" RENAME TO $PGDATABASE"
+            echo "5. Autoclean"
+            wget -O- https://gitlab.eynes.com.ar/infra/eeutils/raw/master/eeutils/templates/auto_clean.sql 2>/dev/null | psql -d $PGDATABASE
+            echo "6. Move the filestore to the database directory"
+            rm -rf /mnt/backup/src/odoo/filestore/$PGDATABASE
+            mv /mnt/backup/src/odoo/filestore/prod /mnt/backup/src/odoo/filestore/$PGDATABASE
+            echo "7. End" 
+        {{- end }}
+        volumeMounts:
+          - mountPath: /mnt/backup/src/odoo
+            name: odoo-data
+          # - mountPath: /root
+          #   name: backup-cache
+      restartPolicy: Never
+      hostname: backup
+      volumes:
+        - name: odoo-data
+          {{- if .Values.persistence.enabled }}
+          persistentVolumeClaim:
+            claimName: {{ (tpl .Values.persistence.existingClaim $) | default (include "common.names.fullname" .) }}
+          {{- else }}
+          emptyDir: {}
+          {{- end }}
+        # - name: backup-cache
+        #   persistentVolumeClaim:
+        #     claimName: backup-cache
+        #
+{{- end }}

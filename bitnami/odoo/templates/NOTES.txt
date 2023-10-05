@@ -40,6 +40,13 @@ APP VERSION: {{ .Chart.AppVersion }}
 {{- end }}
 {{- end }}
 
+{{- if .Values.doodba }}
+2. Obtain the login credentials
+
+  echo Email   : admin
+  echo Password: admin
+
+{{- else }}
 2. Obtain the login credentials
 
   export ODOO_EMAIL={{ .Values.odooEmail }}
@@ -47,5 +54,5 @@ APP VERSION: {{ .Chart.AppVersion }}
 
   echo Email   : $ODOO_EMAIL
   echo Password: $ODOO_PASSWORD
-
+{{- end }}
 {{- include "common.warnings.rollingTag" .Values.image }}

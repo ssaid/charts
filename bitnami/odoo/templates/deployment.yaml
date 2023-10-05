@@ -111,6 +111,65 @@ spec:
           args: {{- include "common.tplvalues.render" (dict "value" .Values.args "context" $) | nindent 12 }}
           {{- end }}
           env:
+            {{- if .Values.doodba }}
+            - name: PGHOST
+              value: {{ template "odoo.databaseHost" . }}
+            - name: PGPORT
+              value: {{ template "odoo.databasePort" . }}
+            - name: PGDATABASE
+              value: {{ template "odoo.databaseName" . }}
+            - name: PGUSER
+              value: {{ template "odoo.databaseUser" . }}
+            - name: PGPASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "odoo.databaseSecretName" . }}
+                  key: {{ include "odoo.databaseSecretPasswordKey" . }}
+            - name: WITHOUT_DEMO
+              value: {{ .Values.withoutDemo | quote }}
+            - name: DB_FILTER
+              value: {{ template "odoo.databaseName" . }}
+            - name: LIST_DB
+              value: {{ .Values.listDb | quote }}
+            {{- if .Values.smtpHost }}
+            - name: SMTP_SERVER
+              value: {{ .Values.smtpHost | quote }}
+            {{- end }}
+            {{- if .Values.smtpPort }}
+            - name: SMTP_PORT
+              value: {{ .Values.smtpPort | quote }}
+            {{- end }}
+            {{- if .Values.smtpUser }}
+            - name: SMTP_USER
+              value: {{ .Values.smtpUser | quote }}
+            {{- end }}
+            {{- if or .Values.smtpPassword .Values.smtpExistingSecret }}
+            - name: SMTP_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ template "odoo.smtpSecretName" . }}
+                  key: smtp-password
+            {{- end }}
+            {{- if .Values.smtpSsl }}
+            - name: SMTP_SSL
+              value: {{ .Values.smtpSsl | quote }}
+            {{- end }}
+            {{- if .Values.emailFrom }}
+            - name: EMAIL_FROM
+              value: {{ .Values.emailFrom | quote }}
+            {{- end }}
+            - name: UNACCENT
+              value: {{ .Values.unaccent | quote }}
+            - name: PROXY_MODE
+              value: {{ .Values.proxyMode | quote }}
+            - name: ODOO_EMAIL
+              value: {{ .Values.odooEmail | quote }}
+            - name: ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ template "odoo.secretName" . }}
+                  key: odoo-password
+            {{- else }}
             - name: BITNAMI_DEBUG
               value: {{ ternary "true" "false" .Values.image.debug | quote }}
             - name: ALLOW_EMPTY_PASSWORD
@@ -191,6 +250,7 @@ spec:
             {{- if .Values.extraEnvVars }}
             {{- include "common.tplvalues.render" (dict "value" .Values.extraEnvVars "context" $) | nindent 12 }}
             {{- end }}
+            {{- end }}
           envFrom:
             {{- if .Values.extraEnvVarsCM }}
             - configMapRef:
@@ -236,8 +296,13 @@ spec:
           resources: {{- toYaml .Values.resources | nindent 12 }}
           {{- end }}
           volumeMounts:
+            {{- if .Values.doodba }}
+            - name: odoo-data
+              mountPath: /var/lib/odoo
+            {{- else }}
             - name: odoo-data
               mountPath: /bitnami/odoo
+            {{- end}}
             {{- if .Values.customPostInitScripts }}
             - mountPath: /docker-entrypoint-init.d
               name: custom-postinit
