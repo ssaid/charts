@@ -784,6 +784,8 @@ networkPolicy:
 
 # Deploying doodba?
 doodba: true
+# After deletion, remove db?
+argocleanup: false
 withoutDemo: true
 listDb: false
 smtpSsl: false

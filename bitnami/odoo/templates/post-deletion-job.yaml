@@ -1,0 +1,44 @@
+{{- if .Values.argocleanup }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ printf "%s-argocleanup" (include "common.names.fullname" .) | trunc 63 | trimSuffix "-" }}
+  namespace: {{ .Release.Namespace | quote }}
+  labels: {{- include "common.labels.standard" ( dict "customLabels" .Values.commonLabels "context" $ ) | nindent 4 }}
+  {{- if .Values.commonAnnotations }}
+  annotations: {{- include "common.tplvalues.render" ( dict "value" .Values.commonAnnotations "context" $ ) | nindent 4 }}
+  {{- end }}
+  annotations:
+    argocd.argoproj.io/hook: PostSync
+    argocd.argoproj.io/hook-delete-policy: HookSucceeded
+spec:
+  template:
+    spec:
+      containers:
+      - image: ghcr.io/tecnativa/docker-duplicity-postgres-s3:latest
+        imagePullPolicy: IfNotPresent
+        name: cleanup
+        env:
+          - name: PGHOST
+            value: {{ template "odoo.databaseHost" . }}
+          - name: PGPORT
+            value: {{ template "odoo.databasePort" . }}
+          - name: PGDATABASE
+            value: {{ template "odoo.databaseName" . }}
+          - name: PGUSER
+            value: {{ template "odoo.databaseUser" . }}
+          - name: PGPASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: {{ include "odoo.databaseSecretName" . }}
+                key: {{ include "odoo.databaseSecretPasswordKey" . }} 
+        command: ["sh", "-c"]
+        args:
+          - |
+            /usr/local/bin/entrypoint
+            psql -d postgres -c "ALTER DATABASE $PGDATABASE WITH ALLOW_CONNECTIONS false"
+            psql -d postgres -c "SELECT pg_terminate_backend(pg_stat_activity.pid) FROM pg_stat_activity WHERE pg_stat_activity.datname = '$PGDATABASE'"
+            dropdb $PGDATABASE
+      restartPolicy: Never
+      hostname: cleanup
+{{- end }}
